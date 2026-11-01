@@ -199,30 +199,44 @@ public class YtDlpService
     /// </summary>
     public async Task<IReadOnlyList<JsonNode>> GetPlaylistEntriesAsync(
         string playlistUrl,
-        int videoRetentionDays,
         int maxEntryScanCount,
         CancellationToken cancellationToken)
     {
-        var args = new List<string> { "--ignore-errors", "--flat-playlist", "-J" };
+        var args = new List<string> { "--flat-playlist", "-J" };
         if (maxEntryScanCount > 0)
         {
             args.Add("--playlist-end");
             args.Add(maxEntryScanCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
-        if (videoRetentionDays > 0)
-        {
-            args.Add("--dateafter");
-            args.Add(DateTime.UtcNow.AddDays(-videoRetentionDays).ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture));
-        }
-
         args.Add(playlistUrl);
 
-        var result = await RunYtDlpJsonAsync(args, cancellationToken).ConfigureAwait(false);
+        var diagnostics = string.Empty;
+        var result = await RunYtDlpJsonAsync(args, cancellationToken, value => diagnostics = value).ConfigureAwait(false);
         var entries = result?["entries"]?.AsArray();
         if (entries is null)
         {
+            var version = await GetYtDlpVersionAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(
+                "yt-dlp {Version} returned no playlist entries for {PlaylistUrl}. Title: {Title}; extractor: {Extractor}; diagnostics: {Diagnostics}. Update yt-dlp to its latest release and retry.",
+                version,
+                playlistUrl,
+                GetString(result, "title"),
+                GetString(result, "extractor_key"),
+                diagnostics);
             return Array.Empty<JsonNode>();
+        }
+
+        if (entries.Count == 0)
+        {
+            var version = await GetYtDlpVersionAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(
+                "yt-dlp {Version} returned an empty playlist for {PlaylistUrl}. Title: {Title}; extractor: {Extractor}; diagnostics: {Diagnostics}. Update yt-dlp to its latest release and retry.",
+                version,
+                playlistUrl,
+                GetString(result, "title"),
+                GetString(result, "extractor_key"),
+                diagnostics);
         }
 
         var list = new List<JsonNode>(entries.Count);
@@ -235,6 +249,32 @@ public class YtDlpService
         }
 
         return list;
+    }
+
+    private Task<string?> GetYtDlpVersionAsync(CancellationToken cancellationToken)
+    {
+        return RunYtDlpTextAsync(new[] { "--ignore-config", "--version" }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Fetches the channel's uploads playlist, which can be used if the channel videos tab is empty.
+    /// </summary>
+    public Task<IReadOnlyList<JsonNode>> GetChannelUploadEntriesAsync(
+        string channelId,
+        int maxEntryScanCount,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(channelId)
+            || !channelId.StartsWith("UC", StringComparison.Ordinal)
+            || channelId.Length <= 2)
+        {
+            _logger.LogWarning("Cannot build the uploads playlist URL for invalid channel ID {ChannelId}.", channelId);
+            return Task.FromResult<IReadOnlyList<JsonNode>>(Array.Empty<JsonNode>());
+        }
+
+        var uploadsPlaylistId = "UU" + channelId[2..];
+        var uploadsPlaylistUrl = $"https://www.youtube.com/playlist?list={uploadsPlaylistId}";
+        return GetPlaylistEntriesAsync(uploadsPlaylistUrl, maxEntryScanCount, cancellationToken);
     }
 
     /// <summary>
@@ -324,6 +364,14 @@ public class YtDlpService
         var extractorKey = result["extractor_key"]?.GetValue<string>() ?? string.Empty;
         var isPlaylist = url.Contains("playlist?list=", StringComparison.OrdinalIgnoreCase)
                          || extractorKey.Equals("YoutubePlaylist", StringComparison.OrdinalIgnoreCase);
+        var sourceType = isPlaylist ? SourceType.Playlist : SourceType.Channel;
+        var channelId = sourceType == SourceType.Channel
+            ? GetString(result, "channel_id")
+            : string.Empty;
+        if (sourceType == SourceType.Channel && string.IsNullOrWhiteSpace(channelId))
+        {
+            channelId = GetString(result, "id");
+        }
 
         return new SourceInfo
         {
@@ -331,11 +379,15 @@ public class YtDlpService
             Description = description,
             ThumbnailUrl = thumbnailUrl,
             PosterUrl = posterUrl,
-            Type = isPlaylist ? SourceType.Playlist : SourceType.Channel
+            Type = sourceType,
+            ChannelId = channelId
         };
     }
 
-    private async Task<JsonNode?> RunYtDlpJsonAsync(IEnumerable<string> arguments, CancellationToken cancellationToken)
+    private async Task<JsonNode?> RunYtDlpJsonAsync(
+        IEnumerable<string> arguments,
+        CancellationToken cancellationToken,
+        Action<string>? successfulStandardError = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -376,6 +428,7 @@ public class YtDlpService
                 return null;
             }
 
+            successfulStandardError?.Invoke(error);
             return JsonNode.Parse(output);
         }
         catch (Exception ex)

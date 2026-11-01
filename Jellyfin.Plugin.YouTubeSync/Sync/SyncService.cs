@@ -90,7 +90,12 @@ public class SyncService
 
         var sourceDir = Path.Combine(config.LibraryBasePath, SyncSeasonLayout.SanitizeFileName(name));
 
-        _logger.LogInformation("Starting sync for source '{Name}'", name);
+        _logger.LogInformation(
+            "Starting sync for source '{Name}' ({Type}/{Feed}) at {Url}",
+            name,
+            source.Type,
+            source.Feed,
+            source.Url);
 
         var maxEntryScanCount = GetMaxEntryScanCount(config.VideoRetentionDays, config.MaxVideosPerSource);
         var playlistDiscoveryLimit = GetPlaylistDiscoveryLimit(config.RecentPlaylistsToKeep);
@@ -126,10 +131,30 @@ public class SyncService
         var entries = await _ytDlpService
             .GetPlaylistEntriesAsync(
                 source.Url,
-                isChannelPlaylistFeed ? 0 : config.VideoRetentionDays,
                 isChannelPlaylistFeed ? playlistDiscoveryLimit : maxEntryScanCount,
                 cancellationToken)
             .ConfigureAwait(false);
+
+        if (entries.Count == 0
+            && source.Type == SourceType.Channel
+            && source.Feed == ChannelFeed.Videos
+            && !string.IsNullOrWhiteSpace(sourceInfo?.ChannelId))
+        {
+            _logger.LogWarning(
+                "The Videos tab for source '{Name}' returned no entries. Trying the channel uploads playlist as a fallback.",
+                name);
+            entries = await _ytDlpService
+                .GetChannelUploadEntriesAsync(sourceInfo.ChannelId, maxEntryScanCount, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (entries.Count == 0)
+        {
+            _logger.LogWarning(
+                "No video entries were returned for source '{Name}'. Skipping this source to preserve existing synced content; check yt-dlp diagnostics above.",
+                name);
+            return;
+        }
 
         IReadOnlyList<PlaylistSeasonDefinition> playlistSeasonDefinitions = Array.Empty<PlaylistSeasonDefinition>();
 
@@ -153,7 +178,7 @@ public class SyncService
             .ConfigureAwait(false);
 
         _logger.LogInformation(
-            "Fetched {Count} playlist entr{Suffix} for source '{Name}'",
+            "Prepared {Count} video entr{Suffix} for source '{Name}'",
             entries.Count,
             entries.Count == 1 ? "y" : "ies",
             name);

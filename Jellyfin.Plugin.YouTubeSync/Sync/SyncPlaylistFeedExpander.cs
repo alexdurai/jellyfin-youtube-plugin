@@ -77,7 +77,7 @@ public sealed class SyncPlaylistFeedExpander
                 ? playlistThumbnailUrl
                 : playlistInfo.PosterUrl;
             var playlistVideos = await _ytDlpService
-                .GetPlaylistEntriesAsync(playlistUrl, 0, maxPlaylistEntryScanCount, cancellationToken)
+                .GetPlaylistEntriesAsync(playlistUrl, maxPlaylistEntryScanCount, cancellationToken)
                 .ConfigureAwait(false);
 
             for (var index = 0; index < playlistVideos.Count; index++)

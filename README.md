@@ -17,11 +17,13 @@ Then install **YouTubeSync** from the plugin catalogue and restart Jellyfin.
 ### Requirements
 
 - **Jellyfin 12.x**
-- **yt-dlp** available on PATH (or configured in plugin settings)
+- **Latest yt-dlp** available on PATH (or configured in plugin settings); YouTube changes frequently and older versions may return empty channel feeds.
 - **ffmpeg** (only needed for Enhanced playback mode)
 
 The release catalog provides a plugin build for Jellyfin 12.x (`net10.0`). Open **Dashboard → YouTubeSync** for the standalone
 plugin settings page.
+
+If yt-dlp is installed with pip, update it with `python3 -m pip install -U "yt-dlp[default]"`.
 
 ## Getting started
 
@@ -55,4 +57,4 @@ dotnet publish Jellyfin.Plugin.YouTubeSync/Jellyfin.Plugin.YouTubeSync.csproj \
   -c Release --no-self-contained -o publish/
 ```
 
-Copy the resulting DLL and `meta.json` into your Jellyfin plugins folder and restart. The checked-in `meta.json` and release archives target Jellyfin 12 (`targetAbi` `12.0.0.0`, framework `net10.0`).
+Copy both `publish/Jellyfin.Plugin.YouTubeSync.dll` and `publish/meta.json` into the same Jellyfin plugin folder, then restart the server. The project copies the valid Jellyfin 12 metadata into the publish directory; installing only the DLL can cause Jellyfin to create a default, malfunctioned plugin manifest.
