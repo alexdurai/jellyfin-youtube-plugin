@@ -47,6 +47,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = "youtubeSyncConfig",
+                DisplayName = "YouTubeSync",
                 EmbeddedResourcePath = $"{ns}.Web.youtubeSyncConfig.html",
                 EnableInMainMenu = true
             },

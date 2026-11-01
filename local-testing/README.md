@@ -5,7 +5,7 @@ This folder contains the disposable local Jellyfin smoke-test environment for th
 ## Prerequisites
 
 - Docker Desktop with Compose support
-- .NET SDK 9+
+- .NET SDK 10 (this local test image targets Jellyfin 12.x)
 
 ## Start the local environment
 

@@ -194,10 +194,9 @@ public class SyncService
                         if (metadata.PublishedUtc is null)
                         {
                             _logger.LogWarning(
-                                "Skipping video {VideoId} during sync for source {SourceName} because no published date could be extracted.",
+                                "Keeping video {VideoId} during sync for source {SourceName} because no published date could be extracted; retention cannot be applied.",
                                 videoId,
                                 name);
-                            return;
                         }
 
                         if (retentionCutoffUtc is DateTime cutoffUtc

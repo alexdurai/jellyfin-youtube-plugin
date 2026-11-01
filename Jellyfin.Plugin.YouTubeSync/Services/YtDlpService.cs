@@ -203,7 +203,7 @@ public class YtDlpService
         int maxEntryScanCount,
         CancellationToken cancellationToken)
     {
-        var args = new List<string> { "--flat-playlist", "-J" };
+        var args = new List<string> { "--ignore-errors", "--flat-playlist", "-J" };
         if (maxEntryScanCount > 0)
         {
             args.Add("--playlist-end");
@@ -307,7 +307,7 @@ public class YtDlpService
     public async Task<SourceInfo?> GetSourceInfoAsync(string url, CancellationToken cancellationToken)
     {
         // --playlist-end 1 limits video retrieval but the container metadata is always present.
-        var args = new[] { "--flat-playlist", "-J", "--playlist-end", "1", url };
+        var args = new[] { "--ignore-errors", "--flat-playlist", "-J", "--playlist-end", "1", url };
         var result = await RunYtDlpJsonAsync(args, cancellationToken).ConfigureAwait(false);
         if (result is null)
         {

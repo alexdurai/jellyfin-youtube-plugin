@@ -29,7 +29,7 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/v}"
           echo "TAG_VERSION=${TAG}" >> "$GITHUB_OUTPUT"
           echo "ASSEMBLY_VERSION=${TAG}.0" >> "$GITHUB_OUTPUT"
-          echo "ZIP_NAME=jellyfin-youtubesync_${TAG}.zip" >> "$GITHUB_OUTPUT"
+          echo "ZIP_NAME=jellyfin-youtubesync_${TAG}_12.x.zip" >> "$GITHUB_OUTPUT"
 
       # ── 3. Patch the version in meta.json before building ──────────────────
       - name: Update meta.json version
@@ -48,16 +48,17 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.ASSEMBLY_VERSION }}
 
-      # ── 4. Setup .NET 8 ────────────────────────────────────────────────────
+      # ── 4. Setup .NET 10 SDK ───────────────────────────────────────────────
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
-      # ── 5. Build & publish (Release) ───────────────────────────────────────
+      # ── 5. Build for Jellyfin 12.x ────────────────────────────────────────
       - name: Publish plugin
         run: |
           dotnet publish Jellyfin.Plugin.YouTubeSync/Jellyfin.Plugin.YouTubeSync.csproj \
+            -f net10.0 \
             -c Release \
             --no-self-contained \
             -p:Version=${{ steps.version.outputs.ASSEMBLY_VERSION }} \
@@ -66,21 +67,34 @@ jobs:
             -p:InformationalVersion=${{ steps.version.outputs.TAG_VERSION }} \
             -o publish/
 
-      # ── 6. Bundle DLL + meta.json into a ZIP ──────────────────────────────
+      # ── 6. Bundle the DLL with Jellyfin 12 ABI metadata ───────────────────
       - name: Create release ZIP
         run: |
-          cp Jellyfin.Plugin.YouTubeSync/meta.json publish/
-          cd publish
-          zip -j "../${{ steps.version.outputs.ZIP_NAME }}" \
-            Jellyfin.Plugin.YouTubeSync.dll \
-            meta.json
+          python3 - <<'PYEOF'
+          import json
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          base_metadata = json.loads(Path("Jellyfin.Plugin.YouTubeSync/meta.json").read_text())
+          version = os.environ["TAG_VERSION"]
+          base_metadata["targetAbi"] = "12.0.0.0"
+          base_metadata["framework"] = "net10.0"
+          meta_path = Path("publish/meta.json")
+          meta_path.write_text(json.dumps(base_metadata, indent=2) + "\n")
+          archive = Path(f"jellyfin-youtubesync_{version}_12.x.zip")
+          with ZipFile(archive, "w", ZIP_DEFLATED) as package:
+              package.write("publish/Jellyfin.Plugin.YouTubeSync.dll", "Jellyfin.Plugin.YouTubeSync.dll")
+              package.write(meta_path, "meta.json")
+          PYEOF
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.TAG_VERSION }}
 
       # ── 7. Compute MD5 checksum (required by Jellyfin manifest) ────────────
       - name: Compute MD5 checksum
         id: checksum
         run: |
-          MD5=$(md5sum "${{ steps.version.outputs.ZIP_NAME }}" | awk '{print $1}')
-          echo "MD5=${MD5}" >> "$GITHUB_OUTPUT"
+          echo "MD5=$(md5sum "${{ steps.version.outputs.ZIP_NAME }}" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       # ── 8. Create the GitHub Release and upload the ZIP ───────────────────
       - name: Create GitHub Release
@@ -107,7 +121,7 @@ jobs:
 
           default_branch = os.environ["DEFAULT_BRANCH"]
 
-          # Read manifest.json from the default branch so prior versions are preserved
+          # Read the current manifest so prior Jellyfin 12 releases are preserved.
           raw = subprocess.check_output(
               ["git", "show", f"origin/{default_branch}:manifest.json"],
               text=True
@@ -115,16 +129,19 @@ jobs:
           data = json.loads(raw)
 
           new_entry = {
-              "version":    os.environ["VERSION"],
-              "changelog":  f"Release {os.environ['VERSION']}",
-              "targetAbi":  "10.11.6.0",
-              "sourceUrl":  os.environ["DOWNLOAD_URL"],
-              "checksum":   os.environ["CHECKSUM"],
-              "timestamp":  os.environ["TIMESTAMP"]
+              "version": os.environ["VERSION"],
+              "changelog": f"Release {os.environ['VERSION']} (Jellyfin 12.x)",
+              "targetAbi": "12.0.0.0",
+              "sourceUrl": os.environ["DOWNLOAD_URL"],
+              "checksum": os.environ["CHECKSUM"],
+              "timestamp": os.environ["TIMESTAMP"],
           }
 
-          # Prepend so the newest version is first
-          data[0]["versions"].insert(0, new_entry)
+          compatible_versions = [
+              entry for entry in data[0]["versions"]
+              if entry.get("targetAbi") == "12.0.0.0"
+          ]
+          data[0]["versions"] = [new_entry] + compatible_versions
 
           # Write to a temp file so the branch switch in the next step doesn't clobber it
           with open("/tmp/updated-manifest.json", "w") as f:
